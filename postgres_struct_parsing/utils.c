@@ -13,6 +13,13 @@ bool is_system_relation(Oid relnamespace) {
     return false;
 }
 
+bool is_relation_in_public_namespace(Oid relnamespace) {
+    if (relnamespace == PUBLIC_NAMESPACE) {
+        return true;
+    }
+    return false;
+}
+
 bool is_table_or_index(char relkind) {
     if (relkind == 'r' || relkind == 'i') {
         return true;

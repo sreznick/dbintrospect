@@ -22,9 +22,11 @@ typedef struct Entity {
 #define PG_CATALOG_NAMESPACE 11
 #define PG_TOAST_NAMESPACE 99
 #define INFORMATION_SCHEMA_NAMESPACE 100
+#define PUBLIC_NAMESPACE 2200
 
 bool is_valid_item(ItemIdData* item, LocationIndex pd_upper);
 bool is_system_relation(Oid relnamespace);
+bool is_relation_in_public_namespace(Oid relnamespace);
 bool is_table_or_index(char relkind);
 void print_relation(FILE* f, const Relation* const src);
 void print_page_header(FILE* f, const PageHeaderData* const page_header);

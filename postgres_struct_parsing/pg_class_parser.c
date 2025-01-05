@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
                 return -1;
             }
 
-            if (!is_system_relation(record.relnamespace) && is_table_or_index(record.relkind)) {
+            if (is_relation_in_public_namespace(record.relnamespace) && is_table_or_index(record.relkind)) {
                 if (entity_count >= entity_capacity) {
                     entity_capacity = entity_capacity == 0 ? 1 : entity_capacity * 2;
                     Entity *temp = (Entity*) realloc(entities, sizeof(Entity) * entity_capacity);
