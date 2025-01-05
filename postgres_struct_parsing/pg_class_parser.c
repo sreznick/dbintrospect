@@ -1,40 +1,113 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 #include "pg_class_parser.h"
 
-void parse_pg_class(FILE* f, struct pg_class* const dst) {
-    fread(dst, sizeof(*dst), 1, f);
-    fseek(f, 0, SEEK_SET);
-}
+int main(int argc, char** argv) {
+    char* fname;
+    if (argc > 1) {
+        fname = argv[1];
+    } else {
+        fname = "example/1259";
+    }
+    FILE* pg_class_file = fopen(fname, "rb");
+    if (pg_class_file == NULL) {
+        return -1;
+    }
 
-void dump_pg_class(FILE* f, const struct pg_class* const src) {
-    fprintf(f, "pg_class:\n");
-    fprintf(f, "oid: %u\n", src->oid);
-    fprintf(f, "relname: %s\n", src->relname);
-    fprintf(f, "relnamespace: %u\n", src->relnamespace);
-    fprintf(f, "reltype: %u\n", src->reltype);
-    fprintf(f, "reloftype: %u\n", src->reloftype);
-    fprintf(f, "relowner: %u\n", src->relowner);
-    fprintf(f, "relam: %u\n", src->relam);
-    fprintf(f, "relfilenode: %u\n", src->relfilenode);
-    fprintf(f, "reltablespace: %u\n", src->reltablespace);
-    fprintf(f, "relpage: %d\n", src->relpage);
-    fprintf(f, "reltuples: %f\n", src->reltuples);
-    fprintf(f, "relallvisibl: %d\n", src->relallvisibl);
-    fprintf(f, "reltoastrelid: %u\n", src->reltoastrelid);
-    fprintf(f, "relhasindex: %d\n", src->relhasindex);
-    fprintf(f, "relisshared: %u\n", src->relisshared);
-    fprintf(f, "relpersistence: %d\n", src->relpersistence);
-    fprintf(f, "relkind: %d\n", src->relkind);
-    fprintf(f, "relnatts: %d\n", src->relnatts);
-    fprintf(f, "relchecks: %d\n", src->relchecks);
-    fprintf(f, "relhasrules: %d\n", src->relhasrules);
-    fprintf(f, "relhastriggers: %d\n", src->relhastriggers);
-    fprintf(f, "relhassubclass: %d\n", src->relhassubclass);
-    fprintf(f, "relrowsecurity: %d\n", src->relrowsecurity);
-    fprintf(f, "relforcerowsecurity: %d\n", src->relforcerowsecurity);
-    fprintf(f, "relispopulated: %d\n", src->relispopulated);
-    fprintf(f, "relreplident: %d\n", src->relreplident);
-    fprintf(f, "relispartition: %d\n", src->relispartition);
-    fprintf(f, "relrewrite: %u\n", src->relrewrite);
-    fprintf(f, "relfrozenxid: %d\n", src->relfrozenxid);
-    fprintf(f, "relminmxid: %d\n", src->relminmxid);
+    // массив для хранения сущностей
+    Entity* entities = NULL;
+    size_t entity_count = 0;
+    size_t entity_capacity = 0;
+
+    long file_size;
+    fseek(pg_class_file, 0, SEEK_END);
+    file_size = ftell(pg_class_file);
+    fseek(pg_class_file, 0, SEEK_SET);
+
+    long current_offset = 0;
+
+    while (current_offset < file_size) {
+        PageHeaderData page_header;
+        fseek(pg_class_file, current_offset, SEEK_SET);
+        if (fread(&page_header, sizeof(PageHeaderData), 1, pg_class_file) != 1) {
+           if (feof(pg_class_file)) break;
+           perror("Error reading page header");
+           fclose(pg_class_file);
+           free(entities);
+           return -1;
+        }
+
+        // количество 4-байтных указателей на версии строк: от конца заголовка страницы до free space
+        size_t num_items = (page_header.pd_lower - sizeof(PageHeaderData)) / sizeof(ItemIdData);
+
+        // создание массива указателей на версии строк
+        ItemIdData* items = (ItemIdData*)malloc(sizeof(ItemIdData) * num_items);
+        if (items == NULL) {
+            perror("Failed to allocate memory for items");
+            fclose(pg_class_file);
+            free(entities);
+            return -1;
+        }
+
+        // переход к началу массива ItemIdData и его чтение
+        fseek(pg_class_file, current_offset + sizeof(PageHeaderData), SEEK_SET);
+        if (fread(items, sizeof(ItemIdData), num_items, pg_class_file) != num_items){
+            perror("Failed to read items");
+            free(items);
+            fclose(pg_class_file);
+            free(entities);
+            return -1;
+        }
+
+        for (size_t i = 0; i < num_items; i++) {
+            if (!is_valid_item(&items[i], page_header.pd_upper)) {
+                continue;
+            }
+
+            // переход к данным соответствующей строки и чтение Relation
+            Relation record;
+            fseek(pg_class_file, current_offset + items[i].lp_off + TUPLEHEADERSIZE, SEEK_SET);
+            if (fread(&record, sizeof(record), 1, pg_class_file) != 1) {
+                perror("Failed to read record");
+                free(items);
+                fclose(pg_class_file);
+                free(entities);
+                return -1;
+            }
+
+            if (!is_system_relation(record.relnamespace) && is_table_or_index(record.relkind)) {
+                if (entity_count >= entity_capacity) {
+                    entity_capacity = entity_capacity == 0 ? 1 : entity_capacity * 2;
+                    Entity *temp = (Entity*) realloc(entities, sizeof(Entity) * entity_capacity);
+                    if (temp == NULL) {
+                        perror("Failed to reallocate memory for entities");
+                        free(items);
+                        fclose(pg_class_file);
+                        free(entities);
+                        return -1;
+                    }
+                    entities = temp;
+                }
+                Entity entity;
+                entity.oid = record.oid;
+                strncpy(entity.relname, record.relname, sizeof(entity.relname));
+                entity.relnamespace = record.relnamespace;
+                entity.relkind = record.relkind;
+                entities[entity_count++] = entity;
+            }
+        }
+
+        free(items);
+        current_offset += PAGESIZE;
+    }
+
+    for (size_t i = 0; i < entity_count; i++) {
+        print_entity(stdout, &entities[i]);
+        printf("\n");
+    }
+
+    fclose(pg_class_file);
+    free(entities);
+    return 0;
 }

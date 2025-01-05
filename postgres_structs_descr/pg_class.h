@@ -2,9 +2,11 @@
 
 #include "postres_types.h"
 
-#define MAGIC_OFFSET (64048)
+// структура заголовка записи в исходниках лежит в src/include/access/htup_details.h, но 
+// размер заголока фиксирован и кажется что читать его нет необходимости
+#define TUPLEHEADERSIZE 32
 
-struct pg_class {
+typedef struct Relation {
     /* oid */
     Oid         oid;
 
@@ -113,4 +115,4 @@ struct pg_class {
     /* partition bound node tree */
     pg_node_tree relpartbound BKI_DEFAULT(_null_);
 #endif
-};
+} Relation;
