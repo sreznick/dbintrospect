@@ -26,3 +26,7 @@ typedef struct ItemIdData
 				lp_flags:2,		/* state of line pointer, see below */
 				lp_len:15;		/* byte length of tuple */
 } ItemIdData;
+
+// структура заголовка записи в исходниках лежит в src/include/access/htup_details.h, но 
+// размер заголока фиксирован и кажется что читать его нет необходимости
+#define TUPLEHEADERSIZE 32

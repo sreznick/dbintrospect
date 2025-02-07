@@ -1,14 +1,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "pg_class_parser.h"
+#include "pg_attribute_parser.h"
 
 int main(int argc, char** argv) {
     char* fname;
     if (argc > 1) {
         fname = argv[1];
     } else {
-        fname = "example/1259";
+        fname = "example/1249";
     }
     FILE* pg_class_file = fopen(fname, "rb");
     if (pg_class_file == NULL) {
@@ -16,9 +16,9 @@ int main(int argc, char** argv) {
     }
 
     // массив для хранения сущностей
-    Entity* entities = NULL;
-    size_t entity_count = 0;
-    size_t entity_capacity = 0;
+    AttributeItem* attributes = NULL;
+    size_t attribute_count = 0;
+    size_t attribute_capacity = 0;
 
     long file_size;
     fseek(pg_class_file, 0, SEEK_END);
@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
            if (feof(pg_class_file)) break;
            perror("Error reading page header");
            fclose(pg_class_file);
-           free(entities);
+           free(attributes);
            return -1;
         }
 
@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
         if (items == NULL) {
             perror("Failed to allocate memory for items");
             fclose(pg_class_file);
-            free(entities);
+            free(attributes);
             return -1;
         }
 
@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
             perror("Failed to read items");
             free(items);
             fclose(pg_class_file);
-            free(entities);
+            free(attributes);
             return -1;
         }
 
@@ -66,48 +66,46 @@ int main(int argc, char** argv) {
             }
 
             // переход к данным соответствующей строки и чтение Relation
-            Relation record;
+            Attribute record;
             fseek(pg_class_file, current_offset + items[i].lp_off + TUPLEHEADERSIZE, SEEK_SET);
             if (fread(&record, sizeof(record), 1, pg_class_file) != 1) {
                 perror("Failed to read record");
                 free(items);
                 fclose(pg_class_file);
-                free(entities);
+                free(attributes);
                 return -1;
             }
 
-            if (is_relation_in_public_namespace(record.relnamespace) && is_table_or_index(record.relkind)) {
-                if (entity_count >= entity_capacity) {
-                    entity_capacity = entity_capacity == 0 ? 1 : entity_capacity * 2;
-                    Entity *temp = (Entity*) realloc(entities, sizeof(Entity) * entity_capacity);
-                    if (temp == NULL) {
-                        perror("Failed to reallocate memory for entities");
-                        free(items);
-                        fclose(pg_class_file);
-                        free(entities);
-                        return -1;
-                    }
-                    entities = temp;
+            if (attribute_count >= attribute_capacity) {
+                attribute_capacity = attribute_capacity == 0 ? 1 : attribute_capacity * 2;
+                AttributeItem *temp = (AttributeItem*) realloc(attributes, sizeof(AttributeItem) * attribute_capacity);
+                if (temp == NULL) {
+                    perror("Failed to reallocate memory for attributes");
+                    free(items);
+                    fclose(pg_class_file);
+                    free(attributes);
+                    return -1;
                 }
-                Entity entity;
-                entity.oid = record.oid;
-                strncpy(entity.relname, record.relname, sizeof(entity.relname));
-                entity.relnamespace = record.relnamespace;
-                entity.relkind = record.relkind;
-                entities[entity_count++] = entity;
+                attributes = temp;
             }
+            AttributeItem attribute;
+            attribute.attrelid = record.attrelid;
+            strncpy(attribute.attname, record.attname, sizeof(attribute.attname));
+            attribute.atttypid = record.atttypid;
+            attribute.attlen = record.attlen;
+            attributes[attribute_count++] = attribute;
         }
 
         free(items);
         current_offset += PAGESIZE;
     }
 
-    for (size_t i = 0; i < entity_count; i++) {
-        print_entity(stdout, &entities[i]);
+    for (size_t i = 0; i < attribute_count; i++) {
+        print_attribute(stdout, &attributes[i]);
         printf("\n");
     }
 
     fclose(pg_class_file);
-    free(entities);
+    free(attributes);
     return 0;
 }

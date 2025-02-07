@@ -2,10 +2,6 @@
 
 #include "postres_types.h"
 
-// структура заголовка записи в исходниках лежит в src/include/access/htup_details.h, но 
-// размер заголока фиксирован и кажется что читать его нет необходимости
-#define TUPLEHEADERSIZE 32
-
 typedef struct Relation {
     /* oid */
     Oid         oid;

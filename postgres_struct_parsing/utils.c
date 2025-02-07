@@ -1,4 +1,5 @@
 #include "pg_class_parser.h"
+#include "pg_attribute_parser.h"
 
 bool is_valid_item(ItemIdData* item, LocationIndex pd_upper) {
     return item->lp_off > 0 && item->lp_off >= pd_upper;
@@ -80,4 +81,11 @@ void print_entity(FILE* f, const Entity* const entity) {
     fprintf(f, "relname: %s\n", entity->relname);
     fprintf(f, "relnamespace: %u\n", entity->relnamespace);
     fprintf(f, "relkind: %c\n", entity->relkind);
+}
+
+void print_attribute(FILE* f, const AttributeItem* const attribute) {
+    fprintf(f, "attrelid: %u\n", attribute->attrelid);
+    fprintf(f, "attname: %s\n", attribute->attname);
+    fprintf(f, "atttypid: %u\n", attribute->atttypid);
+    fprintf(f, "attlen: %u\n", attribute->attlen);
 }
