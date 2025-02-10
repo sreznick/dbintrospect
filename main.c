@@ -10,9 +10,13 @@
 #include <stddef.h>
 #include <assert.h>
 
+#define _XOPEN_SOURCE 500 // Required for realpath
+#include <limits.h> // Required for PATH_MAX
+#include <unistd.h> // Required for realpath
+
+static char db_path_prefix[256] = "";
+
 static struct options {
-	const char *filename;
-	const char *contents;
 	int show_help;
 } options;
 
@@ -52,13 +56,36 @@ static int btree_index_getattr(const char *path, struct stat *stbuf,
         return 0;
     }
 
-	// Check if the path corresponds to one of indexes
+	// Check if the path corresponds to one of indexes directories
     for (size_t i = 0; i < index_data.count; ++i) {
         char index_path[128];
         snprintf(index_path, sizeof(index_path), "%s__oid-%u", index_data.indexes[i].relname, index_data.indexes[i].oid);
         if (strcmp(path + 1, index_path) == 0) {
             stbuf->st_mode = S_IFDIR | 0755;
             stbuf->st_nlink = 2;
+            return 0;
+        }
+    }
+
+    // Check if the path corresponds to the index file (inside the directory)
+    for (size_t i = 0; i < index_data.count; ++i) {
+        char index_dir_path[128];
+        snprintf(index_dir_path, sizeof(index_dir_path), "%s__oid-%u/%u", index_data.indexes[i].relname, index_data.indexes[i].oid, index_data.indexes[i].oid);
+        if (strcmp(path + 1, index_dir_path) == 0) {
+            stbuf->st_mode = S_IFREG | 0444;
+            stbuf->st_nlink = 1;
+
+            // Determine the file size
+            char db_file_path[270];
+            snprintf(db_file_path, sizeof(db_file_path), "%s/%u", db_path_prefix, index_data.indexes[i].oid);
+            FILE *file = fopen(db_file_path, "r");
+            if (file) {
+                fseek(file, 0, SEEK_END);
+                stbuf->st_size = ftell(file);
+                fclose(file);
+            } else {
+                stbuf->st_size = 0;  // Default size if the file can't be opened
+            }
             return 0;
         }
     }
@@ -85,18 +112,92 @@ static int btree_index_readdir(const char *path, void *buf, fuse_fill_dir_t fill
             filler(buf, index_name, NULL, 0, FUSE_FILL_DIR_PLUS);
         }
     } else {
+        // Check if the path corresponds to one of indexes directories
+        for (size_t i = 0; i < index_data.count; ++i) {
+            char index_dir_path[128];
+            snprintf(index_dir_path, sizeof(index_dir_path), "%s__oid-%u", index_data.indexes[i].relname, index_data.indexes[i].oid);
+            if (strcmp(path + 1, index_dir_path) == 0) {
+                // Add the index file inside the directory
+                char index_file_name[16];
+                snprintf(index_file_name, sizeof(index_file_name), "%u", index_data.indexes[i].oid);
+                filler(buf, index_file_name, NULL, 0, FUSE_FILL_DIR_PLUS);
+                return 0;
+            }
+        }
         return -ENOENT;
     }
 
 	return 0;
 }
 
+static int btree_index_open(const char *path, struct fuse_file_info *fi)
+{
+	if ((fi->flags & O_ACCMODE) != O_RDONLY)
+		return -EACCES;
+
+	return 0;
+}
+
+static int btree_index_read(const char *path, char *buf, size_t size, off_t offset,
+		      struct fuse_file_info *fi)
+{
+	(void) fi;
+	
+    char *last_slash = strrchr(path, '/');
+    unsigned int oid = atoi(last_slash + 1);
+
+    // Find the index data for this OID
+    Entity *index = NULL;
+    for (size_t i = 0; i < index_data.count; ++i) {
+        if (index_data.indexes[i].oid == oid) {
+            index = &index_data.indexes[i];
+            break;
+        }
+    }
+
+    if (!index) {
+        return -ENOENT; // Index not found
+    }
+
+    // Construct the path to the database file
+    char db_file_path[270];
+    snprintf(db_file_path, sizeof(db_file_path), "%s/%u", db_path_prefix, index->oid);
+
+     // Check if the file exists
+     struct stat file_stat;
+     if (stat(db_file_path, &file_stat) != 0) {
+         return -ENOENT;
+     }
+
+    // Read the file contents
+    char *content = read_file(db_file_path);
+    if (!content) {
+        return -EIO; // Error reading file
+    }
+
+    // size_t len = strlen(content);
+    size_t len = file_stat.st_size;
+    fuse_log(FUSE_LOG_DEBUG, "btree_index_read: len = %zu\n", len);
+
+    if (offset < len) {
+        if (offset + size > len) {
+            size = len - offset;
+        }
+        memcpy(buf, content + offset, size);
+    } else {
+        size = 0;
+    }
+
+    free(content);
+    return size;
+}
+
 static const struct fuse_operations btree_index_oper = {
 	.init       = btree_index_init,
 	.getattr	= btree_index_getattr,
 	.readdir	= btree_index_readdir,
-	// .open		= btree_index_open,
-	// .read		= btree_index_read,
+	.open		= btree_index_open,
+	.read		= btree_index_read,
 };
 
 static void show_help(const char *progname)
@@ -104,32 +205,6 @@ static void show_help(const char *progname)
 	printf("usage: %s [options] <mountpoint>\n\n", progname);
 	printf("File-system specific options:\n");
     printf("\n");
-}
-
-// Reading file contents
-static char* read_file(const char *path) {
-    FILE *file = fopen(path, "r");
-    if (!file) {
-        perror("Error opening file");
-        return NULL;
-    }
-
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    char *buffer = malloc(file_size + 1);
-    if (!buffer) {
-        perror("Memory allocation failed");
-        fclose(file);
-        return NULL;
-    }
-
-    fread(buffer, 1, file_size, file);
-    buffer[file_size] = '\0';
-
-    fclose(file);
-    return buffer;
 }
 
 int main(int argc, char *argv[])
@@ -145,6 +220,18 @@ int main(int argc, char *argv[])
 	/* Parse options */
 	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
 		return 1;
+
+    const char *relative_db_path = "database/";
+    // Resolve the absolute path
+    char absolute_db_path[PATH_MAX];
+    if (realpath(relative_db_path, absolute_db_path) == NULL) {
+        perror("realpath");
+        strncpy(db_path_prefix, relative_db_path, sizeof(db_path_prefix) - 1);
+        db_path_prefix[sizeof(db_path_prefix) - 1] = '\0';
+    } else {
+        strncpy(db_path_prefix, absolute_db_path, sizeof(db_path_prefix) - 1);
+        db_path_prefix[sizeof(db_path_prefix) - 1] = '\0';
+    }
 
 	/* When --help is specified, first print our own file-system
 	   specific help text, then signal fuse_main to show

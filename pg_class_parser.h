@@ -22,5 +22,6 @@ typedef struct Entity {
 bool is_valid_item(ItemIdData* item, LocationIndex pd_upper);
 bool is_relation_in_public_namespace(Oid relnamespace);
 bool is_index(char relkind);
+char* read_file(const char *path);
 
 Entity* get_btree_indexes(int *count);
